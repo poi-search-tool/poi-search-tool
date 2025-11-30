@@ -2,17 +2,25 @@
 library(shiny)
 library(DT)
 library(leaflet)
-
+library(dplyr)   # 让 bind_rows 可用
 source("poi_function.R")
 
 ui <- fluidPage(
-  titlePanel("POI搜索与下载工具 - 星图地球版"),
+  titlePanel("POI搜索与下载工具"),
   sidebarLayout(
     sidebarPanel(
       width = 3,
       h4("搜索参数"),
-      textInput("keywords", "关键词:", value = "酒店"),
-      textInput("city", "城市:", value = "北京市"),
+      # +++ 【新增代码开始】+++ 
+      # 添加API密钥输入框（passwordInput类型可以隐藏输入内容）
+      passwordInput("api_key", "高德地图API密钥:", 
+                    value = "", 
+                    placeholder = "请输入您的高德地图API密钥"),
+      # +++ 【新增代码结束】+++
+      textInput("keywords", "关键词:", value = "酒店", 
+                placeholder = "例如: 酒店、学校、加油站"),
+      textInput("city", "城市:", value = "北京市", 
+                placeholder = "例如: 北京市、上海市"),
       actionButton("search_btn", "开始搜索", class = "btn-primary"),
       br(), br(),
       downloadButton("download_btn", "下载CSV文件", class = "btn-success")
@@ -38,16 +46,20 @@ server <- function(input, output, session) {
   output$status_text <- renderText({"请输入参数并点击搜索"})
   
   observeEvent(input$search_btn, {
-    if (input$keywords == "" || input$city == "") {
-      output$status_text <- renderText({"错误：请填写关键词和城市！"})
+    # +++ 【修改1：输入验证，增加API密钥检查】+++
+    if (input$api_key == "" || input$keywords == "" || input$city == "") {
+      output$status_text <- renderText({"错误：请填写API密钥、关键词和城市！"})
       return()
     }
     
-    output$status_text <- renderText({"正在搜索..."})
+    output$status_text <- renderText({"正在搜索，请稍候..."})
     
     result <- tryCatch({
-      my_api_key <- "8feeabfecbfe183c158c8d5f5b4842c5"
-      data <- get_poi_data(input$keywords, input$city, my_api_key)
+      # +++ 【修改2：使用用户输入的密钥，删除硬编码的密钥】+++
+      # 按细分类别循环搜索，每类最多 200 条
+      types <- c("商务酒店", "度假酒店", "快捷酒店", "星级酒店", "民宿", "招待所")
+      data  <- bind_rows(lapply(types, function(kw)
+        get_poi_data(kw, input$city, input$api_key)))
       data
     }, error = function(e) {
       return(paste("错误:", e$message))
@@ -76,13 +88,10 @@ server <- function(input, output, session) {
     # 使用星图地球地图源
     leaflet(data) %>%
       addTiles(
-        urlTemplate = "https://tiles.gooblog.cn/earth/{z}/{x}/{y}.png",
-        attribution = '© 星图地球'
+        urlTemplate = "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}",
+        options = tileOptions(subdomains = "1234", attribution = NULL)
       ) %>%
-      addMarkers(
-        lng = ~经度, lat = ~纬度,
-        popup = ~paste("<b>", 名称, "</b><br>", 地址)
-      )
+      addMarkers(~经度, ~纬度, popup = ~paste("<b>", 名称, "</b><br>", 地址))
   })
   
   output$download_btn <- downloadHandler(
